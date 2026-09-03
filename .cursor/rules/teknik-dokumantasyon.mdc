@@ -1,0 +1,28 @@
+---
+description: Is mantigi degistiginde PROJE_TEKNIK.txt dokumanini guncelle
+alwaysApply: true
+---
+
+# Teknik dokumantasyon senkronu
+
+Ana teknik dokuman: `docs/PROJE_TEKNIK.txt`
+
+Asagidaki tur degisikliklerde bu dosyayi AYNI OTURUMDA guncelle:
+
+- Bot komutlari, mesajlar, klavyeler (`src/bot/`)
+- Bakiye, yatirim, cekim, kar mantigi (`src/services/`)
+- Cron job davranisi (`src/jobs/`)
+- Veritabani semasi (`prisma/schema.prisma`)
+- Env degiskenleri (`src/config/env.ts`, `.env.example`)
+- Is kurallari (min tutar, cekim gunleri, kar orani)
+
+Guncelleme checklist (dosyada Bolum 19):
+
+1. Is mantigi ve akislar
+2. Komut listesi
+3. Env tablosu
+4. Veritabani semasi
+5. Bilinen sinirlamalar / roadmap
+6. Degisiklik gecmisi + `Son guncelleme` tarihi
+
+Markdown yerine tek kaynak `docs/PROJE_TEKNIK.txt` kullanilir.

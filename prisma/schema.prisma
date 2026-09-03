@@ -1,0 +1,98 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String   @id @default(cuid())
+  telegramId BigInt   @unique
+  username   String?
+  firstName  String?
+  lastName   String?
+  wmPurse    String?
+  trustWallet String?
+  language   String   @default("tr")
+  languageConfirmed Boolean @default(false)
+  onboardingCompleted Boolean @default(false)
+  status     String   @default("active")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  ledgerEntries LedgerEntry[]
+  deposits      Deposit[]
+  withdrawals   Withdrawal[]
+}
+
+model Deposit {
+  id           String    @id @default(cuid())
+  userId       String
+  amount       Decimal
+  currency     String    @default("USDT")
+  wmInvoiceId  String?
+  reference    String    @unique
+  status       String    @default("pending")
+  matchedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+}
+
+model Withdrawal {
+  id              String    @id @default(cuid())
+  userId          String
+  amount          Decimal
+  fee             Decimal   @default(0)
+  currency        String    @default("USDT")
+  wmPurseSnapshot String?
+  walletAddressSnapshot String?
+  wmTransferId    String?
+  status          String    @default("pending")
+  scheduledFor    DateTime?
+  adminNote       String?
+  processedAt     DateTime?
+  createdAt       DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@index([status, scheduledFor])
+}
+
+model LedgerEntry {
+  id           String   @id @default(cuid())
+  userId       String
+  type         String
+  amount       Decimal
+  balanceAfter Decimal
+  referenceId  String?
+  note         String?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+}
+
+model ProfitDistribution {
+  id             String   @id @default(cuid())
+  periodYear     Int
+  periodMonth    Int
+  profitRate     Decimal
+  totalDistributed Decimal
+  status         String   @default("completed")
+  createdAt      DateTime @default(now())
+
+  @@unique([periodYear, periodMonth])
+}
+
+model AppConfig {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

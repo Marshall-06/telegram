@@ -1,0 +1,521 @@
+================================================================================
+  VANGUARD INVESTMENTS - TELEGRAM YATIRIM BOTU
+  TEKNIK DOKUMANTASYON
+================================================================================
+
+Son guncelleme : 2026-09-02
+Bot            : @Vanguard5_bot
+Versiyon       : 0.1.3
+Diller         : Turkce, English, Russian
+
+ONEMLI: Is mantigi, env ayarlari, komutlar veya veritabani semasi degistiginde
+        bu dosya AYNI DEGISIKLIKLE birlikte guncellenmelidir.
+        Tek kaynak dokuman: docs/PROJE_TEKNIK.txt
+
+================================================================================
+1. PROJE OZETI
+================================================================================
+
+Telegram bot uzerinden yatirimci yonetimi yapan, arka planda Node.js ile
+calisan tasınabilir bir backend uygulamasidir.
+
+Frontend  : Telegram bot (grammY) — TR / EN / RU
+Backend   : Node.js + TypeScript
+Veritabani: SQLite (yerel gelistirme) / PostgreSQL (sunucu - planli)
+Odeme     : Trust Wallet (ana hesap, USDT / BEP20)
+
+Trading / borsa islemleri bu projeden BAGIMSIZDIR. Backend sadece:
+  - Kullanici bakiyesi
+  - Yatirim talepleri
+  - Cekim talepleri (manuel admin gonderimi)
+  - Aylik sabit kar dagitimi
+islevlerini yonetir.
+
+Hukuki yapi proje sahibi tarafindan ustlenilir.
+
+================================================================================
+2. IS MANTIGI VE KARARLAR
+================================================================================
+
+2.1 Yatirim
+  - Kullanici bot uzerinden tutar girer
+  - Sistem benzersiz referans kodu uretir (DEP-...)
+  - WebMoney entegrasyonu gelince fatura/odeme eslestirme eklenecek
+  - Onaylanan yatirim ledger'a "deposit" kaydi olarak yazilir (henuz otomatik degil)
+
+2.2 Cekim (MANUEL ADMIN MODELI)
+  - Kullanici talep olusturur
+  - Bakiye ANINDA dusulmez; tutar "bekleyen cekim" olarak rezerve edilir
+  - Cekilebilir bakiye = toplam bakiye - bekleyen cekim toplami
+  - Admin'e liste gelir (cuzdan numarasi + tutar)
+  - Admin WebMoney'den MANUEL gonderim yapar
+  - Admin /admin_cekim_tamam ID ile bakiyeyi dusurur
+  - Cekimler belirli gunlerde toplu islenir (WITHDRAW_DAYS)
+
+2.3 Kar dagitimi
+  - AYLIK, SABIT oran (MONTHLY_PROFIT_RATE)
+  - Piyasa performansina bagli degil
+  - Her ayin 1'inde saat 09:00 otomatik calisir
+  - Aktif kullanicinin bakiyesine oran uygulanir
+  - Ayni ay icin tekrar dagitim yapilmaz
+
+2.4 WebMoney
+  - Detaylar henuz netlesmedi
+  - Env placeholder: WM_WMID, WM_PURSE, WM_KEY_PATH
+  - Planlanan arayuzler: X1 (fatura), X8 (gelen transfer), X2 (cekim - opsiyonel)
+
+================================================================================
+3. MIMARI
+================================================================================
+
+  [Telegram Kullanici] <---> [grammY Bot] <---> [Services] <---> [Prisma/DB]
+                                    |
+                                    +---> [Cron Jobs]
+                                    |       - Aylik kar dagitimi
+                                    |       - Cekim gunu admin bildirimi
+                                    |
+                                    +---> [Admin Komutlari]
+
+Katmanlar:
+  src/bot/          Telegram komutlari, mesajlar, klavyeler
+  src/services/     Is mantigi (wallet, withdrawal, investment)
+  src/jobs/         Zamanlanmis gorevler
+  src/config/       Env dogrulama (Zod)
+  src/db/           Prisma client
+  src/lib/          Yardimci moduller (logger, withdraw-schedule)
+  prisma/           Veritabani semasi
+
+================================================================================
+4. DIZIN YAPISI
+================================================================================
+
+my-node-app/
+  docs/
+    PROJE_TEKNIK.txt          <- Bu dosya (ana teknik dokuman)
+  prisma/
+    schema.prisma             <- Veritabani modelleri
+  src/
+    index.ts                  <- Uygulama giris noktasi
+    config/env.ts             <- Ortam degiskenleri
+    db/client.ts              <- Prisma baglantisi
+    lib/
+      logger.ts               <- Pino loglama
+      withdraw-schedule.ts    <- Cekim gunu hesaplama
+    bot/
+      index.ts                <- Bot baslatma
+      messages.ts             <- Kullanici mesaj sablonlari
+      keyboards.ts            <- Telegram klavyeleri
+      commands/
+        index.ts              <- Kullanici komutlari
+        admin.ts              <- Admin komutlari
+    services/
+      wallet.service.ts       <- Bakiye, ledger, kullanici
+      withdrawal.service.ts   <- Cekim talepleri
+      investment.service.ts   <- Yatirim talebi, kar dagitimi
+    jobs/
+      monthly-profit.job.ts   <- Aylik kar cron
+      withdraw-notify.job.ts  <- Cekim gunu admin bildirimi cron
+  data/                       <- SQLite dosyasi (gitignore)
+  .env                        <- Gizli ayarlar (gitignore)
+  .env.example                <- Ornek env sablonu
+  docker-compose.yml          <- PostgreSQL + Redis (sunucu icin)
+  package.json
+  tsconfig.json
+
+================================================================================
+5. VERITABANI SEMASI
+================================================================================
+
+User
+  id, telegramId (unique), username, firstName, lastName
+  wmPurse          : WebMoney cuzdan (cekim icin)
+  status           : active | (ileride: suspended)
+  createdAt, updatedAt
+
+Deposit
+  id, userId, amount, currency (WMZ)
+  wmInvoiceId      : WebMoney fatura ID (gelecek)
+  reference        : Benzersiz referans (DEP-...)
+  status           : pending | matched | cancelled
+  matchedAt, createdAt
+
+Withdrawal
+  id, userId, amount, fee, currency
+  wmPurseSnapshot  : Talep anindaki cuzdan
+  wmTransferId     : Admin transfer referansi (opsiyonel, gelecek)
+  status           : pending | completed | cancelled
+  scheduledFor     : Planlanan cekim gunu
+  adminNote        : Admin notu
+  processedAt, createdAt
+
+LedgerEntry (cift kayit mantigi - tek yonlu zincir)
+  id, userId
+  type             : deposit | withdrawal | profit | fee | adjustment
+  amount           : Pozitif veya negatif
+  balanceAfter     : Islem sonrasi bakiye
+  referenceId      : Iliskili deposit/withdrawal ID
+  note, createdAt
+
+ProfitDistribution
+  id, periodYear, periodMonth (unique birlikte)
+  profitRate, totalDistributed, status, createdAt
+
+AppConfig
+  key, value, updatedAt (ileride dinamik ayarlar icin)
+
+================================================================================
+6. BAKIYE MANTIGI
+================================================================================
+
+Toplam bakiye:
+  Ledger'daki son kaydin balanceAfter degeri
+  Kayit yoksa 0
+
+Bekleyen cekim:
+  status=pending olan Withdrawal kayitlarinin amount toplami
+
+Cekilebilir bakiye:
+  toplam_bakiye - bekleyen_cekim_toplami
+
+Ledger kurallari:
+  - Her para hareketi yeni bir LedgerEntry olusturur
+  - balanceAfter negatif olamaz (yetersiz bakiye hatasi)
+  - Cekim talebi olusturmada ledger YAZILMAZ (sadece rezervasyon)
+  - Admin cekim tamamlayinca ledger'a negatif withdrawal yazilir
+
+================================================================================
+7. YATIRIM AKISI
+================================================================================
+
+1. Kullanici /deposit veya "Yatirim" butonu
+2. Minimum tutar kontrolu (MIN_DEPOSIT)
+3. Deposit kaydi olusturulur (status: pending)
+4. Referans kodu kullaniciya gosterilir
+5. [GELECEK] WebMoney X1 fatura + X8 eslestirme
+6. [GELECEK] Eslesince ledger deposit + status matched
+
+Dosya: src/services/investment.service.ts -> createDepositRequest()
+
+================================================================================
+8. CEKIM AKISI
+================================================================================
+
+KULLANICI TARAFI:
+1. /withdraw veya "Cekim" butonu
+2. wmPurse yoksa cuzdan numarasi sorulur (format: Z + 12 rakam)
+3. Tutar sorulur (MIN_WITHDRAW kontrolu)
+4. Cekilebilir bakiye kontrolu
+5. Withdrawal kaydi (pending) + scheduledFor hesaplanir
+6. Kullaniciya planlanan gun bildirilir
+
+ADMIN TARAFI:
+1. WITHDRAW_DAYS gunlerinde saat WITHDRAW_NOTIFY_HOUR'da otomatik liste
+   veya /admin_cekimler ile manuel liste
+2. Admin WebMoney'den manuel transfer yapar
+3. /admin_cekim_tamam ID  -> ledger dusum + status completed + kullanici bildirimi
+4. /admin_cekim_iptal ID  -> status cancelled, bakiye degismez
+
+Cekim gunu hesaplama:
+  WITHDRAW_DAYS=1,15  -> ayin 1 ve 15'i
+  Talep gununden itibaren ilk uygun gun scheduledFor olur
+
+Dosyalar:
+  src/services/withdrawal.service.ts
+  src/bot/commands/admin.ts
+  src/lib/withdraw-schedule.ts
+  src/jobs/withdraw-notify.job.ts
+
+================================================================================
+9. AYLIK KAR DAGITIMI
+================================================================================
+
+Zamanlama : Her ayin 1'i, saat 09:00 (cron: "0 9 1 * *")
+Oran      : MONTHLY_PROFIT_RATE (varsayilan %5)
+
+Algoritma:
+  1. Bu ay icin ProfitDistribution var mi kontrol et
+  2. status=active kullanicilari getir
+  3. Her kullanici icin guncel bakiye > 0 ise:
+     kar = bakiye * (profitRate / 100)
+  4. Ledger'a type=profit kaydi yaz
+  5. ProfitDistribution ozet kaydi olustur
+
+Dosya: src/services/investment.service.ts -> distributeMonthlyProfit()
+Job  : src/jobs/monthly-profit.job.ts
+
+================================================================================
+10. TELEGRAM BOT KOMUTLARI
+================================================================================
+
+KULLANICI:
+  /start     Hos geldin + ana menu klavyesi
+  /about     Proje tanitimi
+  /balance   Toplam + cekilebilir bakiye
+  /deposit   Yatirim talebi (tutar sor)
+  /withdraw  Cekim talebi (cuzdan + tutar sor)
+  /history   Son 10 ledger islemi
+  /help      Komut listesi
+  /language  Dil secimi (TR / EN / RU)
+  /cancel    Devam eden akisi iptal et
+
+COKLU DIL:
+  - Ilk /start: "Welcome {name}, select language" + inline keyboard (TR / EN / RU)
+  - User.language + languageConfirmed DB'de saklanir
+  - Menu butonlari secilen dile gore degisir
+  - Hata mesajlari BusinessError kodu ile cevrilir
+  - Modul: src/bot/i18n/locales/{tr,en,ru}.ts
+
+ONBOARDING AKISI (yeni kullanici):
+  1. /start → Dil sec (🇹🇷 🇬🇧 🇷🇺)
+  2. Hos geldin + bilgi menusu (inline butonlar)
+  3. Kullanici istedigi konuya tiklar:
+     - Proje hakkinda (about)
+     - Nasil calisir (howItWorks)
+     - Onemli bilgiler (importantNotes)
+  4. "Anladim" butonu → ana menu
+  - onboardingCompleted DB alani
+  - Modul: src/bot/flows/onboarding.ts
+  - Donen kullanici /start: direkt welcome + menu
+
+AKIS (session.awaiting):
+  deposit | withdraw_wallet | withdraw_amount
+  Yonetim: src/bot/flows/session.ts
+
+KLAVYE KISAYOLLARI:
+  Bakiye  -> /balance
+  Yatirim -> /deposit
+  Cekim   -> /withdraw
+  Gecmis  -> /history
+  Proje   -> /about
+  Yardim  -> /help
+  Iptal   -> /cancel
+
+ADMIN (ADMIN_TELEGRAM_IDS ile yetkilendirme):
+  Admin link : https://t.me/Vanguard5_bot?start=admin
+  Bot link   : https://t.me/Vanguard5_bot
+  /admin                  Admin panel menusu
+  /admin_cekimler         Bekleyen cekim listesi
+  /admin_cekim_tamam ID   Gonderim sonrasi bakiye dus
+  /admin_cekim_iptal ID   Talebi iptal et
+
+Admin listesinde ID olarak kaydin son 8 karakteri kullanilabilir.
+
+================================================================================
+11. ORTAM DEGISKENLERI (.env)
+================================================================================
+
+Zorunlu:
+  BOT_TOKEN              Telegram bot token (@BotFather)
+  DATABASE_URL           file:./data/dev.db (yerel) veya postgresql://...
+
+Is kurallari:
+  MIN_DEPOSIT=10         Minimum yatirim
+  MIN_WITHDRAW=10        Minimum cekim
+  WITHDRAW_DAYS=1,15     Cekim islem gunleri (ayin gunleri, virgulle)
+  WITHDRAW_NOTIFY_HOUR=9 Cekim gunu liste bildirim saati
+  ADMIN_TELEGRAM_IDS=    Yonetici Telegram ID'leri (virgulle)
+  MONTHLY_PROFIT_RATE=5  Aylik sabit kar yuzdesi
+
+Opsiyonel:
+  NODE_ENV=development
+  LOG_LEVEL=info
+  WM_WMID, WM_PURSE, WM_KEY_PATH  (WebMoney - sonra)
+  TELEGRAM_PROXY                  (opsiyonel, yerel proxy adresi)
+
+Ornek sablon: .env.example
+
+================================================================================
+12. AG / TELEGRAM ERISIMI
+================================================================================
+
+Durum (mevcut ag):
+  - VPN OLMADAN api.telegram.org erisilemiyor
+  - Kurumsal DNS api.telegram.org adresini 127.0.0.1'e yonlendiriyor
+  - Telefon VPN + PdaNet kullanilsa bile PC'de Kerio Virtual Network aciksa
+    DNS yine kurumsal sunucuya gider (control.gulzemin.local / 10.168.115.1)
+  - Bu bir kod hatasi degil; ag seviyesinde DNS engeli
+
+Telefon VPN + PdaNet senaryosu:
+  1. Telefonda VPN acik
+  2. PdaNet ile PC'ye internet paylas
+  3. PC'de Kerio / kurumsal ag adaptoru KAPAT (onemli!)
+  4. Sadece "PdaNet Broadband Connection" aktif kalsin
+  5. ipconfig /flushdns
+  6. npm run check:telegram  -> BASARILI olmali
+  7. npm run dev
+
+Alternatif DNS duzeltme (yonetici CMD):
+  echo 149.154.166.110 api.telegram.org >> C:\Windows\System32\drivers\etc\hosts
+  ipconfig /flushdns
+  (Gecici cozum; Kerio kapali + PdaNet tercih edilir)
+
+Yerel gelistirme:
+  1. VPN'i ac
+  2. npm run dev calistir
+  3. @Vanguard5_bot uzerinden test et
+
+Production (onerilen):
+  - Botu dis agdaki VPS'te calistir (Hetzner, DigitalOcean, vb.)
+  - VPS'te Telegram genelde aciktir, VPN gerekmez
+  - docker-compose + PostgreSQL ile kalici calisma
+
+Opsiyonel proxy (.env):
+  TELEGRAM_PROXY=http://127.0.0.1:7890
+  (VPN yerel proxy sagliyorsa kullanilir; sistem VPN yeterliyse gerekmez)
+
+================================================================================
+13. KURULUM VE CALISTIRMA
+================================================================================
+
+Gereksinimler:
+  Node.js >= 18
+  npm
+
+Ilk kurulum:
+  cd my-node-app
+  npm install
+  copy .env.example .env
+  (.env icinde BOT_TOKEN ve ADMIN_TELEGRAM_IDS doldur)
+  npm run db:push
+
+Gelistirme:
+  npm run dev
+
+Production build:
+  npm run build
+  npm start
+
+Veritabani araclari:
+  npm run db:studio    Prisma GUI
+  npm run db:generate  Client yenile
+  npm run db:migrate   Migration (PostgreSQL geciste)
+
+================================================================================
+14. SUNUCUYA TASIMA
+================================================================================
+
+1. docker compose up -d          PostgreSQL + Redis baslat
+2. DATABASE_URL=postgresql://...   .env guncelle
+3. prisma/schema.prisma provider postgresql yap (gerekirse)
+4. npm run db:push
+5. npm run build && npm start
+
+Kod degisikligi gerekmez; sadece env ve DB provider guncellenir.
+SQLite -> PostgreSQL veri tasima ayri migration script gerektirir.
+
+================================================================================
+15. KUTUPHANELER
+================================================================================
+
+grammy         Telegram Bot API
+@prisma/client ORM + veritabani
+zod            Env dogrulama
+dotenv         .env yukleme
+pino           Loglama
+  node-cron      Zamanlanmis gorevler
+  https-proxy-agent  Opsiyonel Telegram proxy
+  typescript     Tip guvenligi
+tsx            Gelistirme runtime
+
+Planlanan (WebMoney netlesince):
+  webmoney-js   WebMoney XML API
+
+================================================================================
+16. GUVENLIK
+================================================================================
+
+  - .env git'e commit edilmez (.gitignore)
+  - BOT_TOKEN gizli tutulmali; sizdirilirsa BotFather'dan revoke edilmeli
+  - Admin komutlari sadece ADMIN_TELEGRAM_IDS listesindekilere acik
+  - Tum para hareketleri ledger'da iz birakir
+  - Cekim tamamlama admin onayi gerektirir
+
+================================================================================
+17. BILINEN SINIRLAMALAR
+================================================================================
+
+  [ ] WebMoney entegrasyonu yok (yatirim eslestirme manuel/eksik)
+  [ ] Yatirim onayinda otomatik ledger yazimi yok
+  [ ] Admin web paneli yok (sadece Telegram admin komutlari)
+  [ ] KYC / kullanici dogrulama yok
+  [ ] Telegram API: yerel agda VPN/PdaNet olmadan erisilemiyor (DNS engeli)
+  [ ] Ayni anda birden fazla npm run dev CALISTIRMAYIN (Telegram tek baglanti kabul eder)
+  [ ] AppConfig tablosu henuz kullanilmiyor
+
+BOT ARA SIRA CALISMIYORSA (Troubleshooting):
+  1. Birden fazla bot instance: npm run restart ile tek instance baslat
+  2. Ag degisti (Kerio acildi / PdaNet kapandi): npm run check:telegram
+  3. Terminal kapandi: bot durur, yeniden npm run dev gerekir
+  4. Kalici cozum: VPS'e deploy
+
+================================================================================
+18. SONRAKI ADIMLAR (ROADMAP)
+================================================================================
+
+  1. WebMoney X1 + X8 entegrasyonu (yatirim otomasyonu)
+  2. Yatirim eslesince otomatik ledger + kullanici bildirimi
+  3. Admin yatirim onay komutu (/admin_yatirim_tamam)
+  4. ADMIN_TELEGRAM_IDS yapilandirma (tamamlandi: 6759929915)
+  5. Sunucu deploy (Docker + PostgreSQL) - ONCELIK (VPN'siz calisma icin)
+  6. Opsiyonel admin web paneli
+
+================================================================================
+19. DEGISIKLIK GECMISI
+================================================================================
+
+2026-09-02  v0.1.3c /start dil secim mesaji guncellendi
+  - Ilk /start: "Welcome {name}, select language" + inline keyboard
+
+2026-08-31  v0.1.3b MASTER_TRUST_WALLET tanimlandi (BEP20 USDT yatirim adresi)
+
+2026-08-31  v0.1.3  Coklu dil (TR / EN / RU)
+  - i18n modulu ve dil secim akisi
+  - Menu/cevaplar locale bazli
+  - BusinessError ile cevrilen hata mesajlari
+  - Telegram komut aciklamalari 3 dilde
+
+2026-08-31  v0.1.2  Trust Wallet ana hesap
+  - MASTER_TRUST_WALLET env (yatirim adresi)
+  - Kullanici trustWallet alani (cekim adresi)
+  - Para birimi: USDT (DEFAULT_CURRENCY)
+  - Ag: BEP20 (WALLET_NETWORK)
+
+2026-08-31  v0.1.1  Ag / Telegram notlari
+  - VPN olmadan yerel agda Telegram API erisilemiyor (dogrulandi)
+  - TELEGRAM_PROXY opsiyonel destegi
+  - ADMIN_TELEGRAM_IDS=6759929915
+
+2026-08-31  v0.1.0  Ilk iskelet
+  - Telegram bot komutlari
+  - SQLite + Prisma
+  - Manuel cekim modeli (admin listesi + tamam/iptal)
+  - Aylik sabit kar dagitimi cron
+  - Cekim gunu admin bildirimi cron
+  - Tasinabilir mimari (docker-compose hazir)
+
+================================================================================
+20. DOKUMANTASYON GUNCELLEME KURALLARI
+================================================================================
+
+Asagidaki degisikliklerde bu dosya GUNCELLENMELIDIR:
+
+  - Yeni/degisen bot komutu
+  - Bakiye veya cekim mantigi degisikligi
+  - Yeni env degiskeni
+  - Veritabani semasi degisikligi
+  - Yeni servis veya job
+  - WebMoney entegrasyonu eklendiginde
+  - Is kurallari (min tutar, kar orani, cekim gunleri) degistiginde
+
+Guncelleme kontrol listesi:
+  [ ] Bolum 2 Is mantigi
+  [ ] Bolum 5 Veritabani
+  [ ] Bolum 6-9 ilgili akis
+  [ ] Bolum 10 Komutlar
+  [ ] Bolum 11 Env
+  [ ] Bolum 16 Sinirlamalar
+  [ ] Bolum 18 Degisiklik gecmisi + tarih
+
+================================================================================
+  DOSYA SONU
+================================================================================
