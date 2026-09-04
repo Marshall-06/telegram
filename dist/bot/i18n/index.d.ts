@@ -1,0 +1,14 @@
+import type { Locale, LocalePack, MenuAction, TranslateParams, TranslationKey } from "./types.js";
+import { LOCALES } from "./types.js";
+export declare function getLocalePack(locale: Locale): LocalePack;
+export declare function t(locale: Locale, key: TranslationKey, params?: TranslateParams): string;
+export declare function translateError(locale: Locale, code: string, params?: TranslateParams): string;
+export declare function getWithdrawDaysLabel(): string;
+export declare function detectLocale(languageCode?: string): Locale;
+export declare function parseLocale(value: string): Locale | null;
+export declare function getMenuLabel(locale: Locale, action: MenuAction): string;
+export declare function resolveMenuAction(text: string): MenuAction | null;
+export declare function getLedgerTypeLabel(locale: Locale, type: string): string;
+export declare function formatDate(locale: Locale, date: Date): string;
+export { LOCALES };
+export type { Locale, MenuAction, TranslationKey, TranslateParams };
