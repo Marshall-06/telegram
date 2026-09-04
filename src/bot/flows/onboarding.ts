@@ -61,12 +61,14 @@ function topicText(locale: Locale, topic: string): string | null {
 
 export function registerOnboardingHandlers(bot: Bot<BotContext>): void {
   bot.callbackQuery(/^onboarding:(about|howItWorks|importantNotes)$/, async (ctx) => {
+    // Callback query-ä derrew jogap berýäris (timeout ýalňyşlygynyň öňüni almak üçin)
+    await ctx.answerCallbackQuery().catch(() => { });
+
     const { resolveContextLocale } = await import("../helpers/locale-context.js");
     const locale = await resolveContextLocale(ctx);
     const topic = ctx.match![1];
     const text = topicText(locale, topic);
 
-    await ctx.answerCallbackQuery();
     if (!text) return;
 
     await ctx.reply(text, {
@@ -76,9 +78,11 @@ export function registerOnboardingHandlers(bot: Bot<BotContext>): void {
   });
 
   bot.callbackQuery("onboarding:complete", async (ctx) => {
+    // Muňa hem derrew jogap berýäris
+    await ctx.answerCallbackQuery().catch(() => { });
+
     const { resolveContextLocale } = await import("../helpers/locale-context.js");
     const locale = await resolveContextLocale(ctx);
-    await ctx.answerCallbackQuery();
     await finishOnboarding(ctx, locale);
   });
 }
