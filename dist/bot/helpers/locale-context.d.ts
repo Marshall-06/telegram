@@ -1,6 +1,20 @@
 import type { User } from "@prisma/client";
 import type { BotContext } from "../context.js";
 import { type Locale } from "../i18n/index.js";
-export declare function getDbUser(ctx: BotContext): Promise<any>;
+export declare function getDbUser(ctx: BotContext): Promise<{
+    id: string;
+    telegramId: bigint;
+    username: string | null;
+    firstName: string | null;
+    lastName: string | null;
+    wmPurse: string | null;
+    trustWallet: string | null;
+    language: string;
+    languageConfirmed: boolean;
+    onboardingCompleted: boolean;
+    status: string;
+    createdAt: Date;
+    updatedAt: Date;
+} | null>;
 export declare function getUserLocale(user: User | null | undefined, fallbackCode?: string): Locale;
 export declare function resolveContextLocale(ctx: BotContext): Promise<Locale>;
